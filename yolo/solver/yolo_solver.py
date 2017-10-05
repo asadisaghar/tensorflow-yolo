@@ -2,6 +2,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import tfprism
 import tensorflow as tf
 import numpy as np
 import re
@@ -28,9 +29,12 @@ class YoloSolver(Solver):
     #
     self.dataset = dataset
     self.net = net
+    #session params (for paralellizing)
+    # with tfprism
+    self.session = tf.Session('grpc://192.168.1.194:5600')
     #construct graph
     self.construct_graph()
-
+    
   def _train(self):
     """Train model
 
@@ -47,8 +51,13 @@ class YoloSolver(Solver):
     opt = tf.train.MomentumOptimizer(self.learning_rate, self.moment)
     grads = opt.compute_gradients(self.total_loss)
 
-    apply_gradient_op = opt.apply_gradients(grads, global_step=self.global_step)
+    # without tfprism    
+#    apply_gradient_op = opt.apply_gradients(grads, global_step=self.global_step)
 
+    # with tfprism
+    apply_gradient_op = opt.apply_gradients(grads, global_step=self.global_step)
+    apply_gradients_op, self.copier = tfprism.distribute_graph_on_all_tasks(apply_gradient_op, self.session)
+    
     return apply_gradient_op
 
   def construct_graph(self):
@@ -73,7 +82,11 @@ class YoloSolver(Solver):
 
     summary_op = tf.summary.merge_all()
 
-    sess = tf.Session()
+    # without tfprism   
+#    sess =tf.Session()
+
+    # with tfprism    
+    sess = self.session
 
     sess.run(init)
     saver1.restore(sess, self.pretrain_path)
@@ -85,7 +98,13 @@ class YoloSolver(Solver):
       start_time = time.time()
       np_images, np_labels, np_objects_num = self.dataset.batch()
 
-      _, loss_value, nilboy = sess.run([self.train_op, self.total_loss, self.nilboy], feed_dict={self.images: np_images, self.labels: np_labels, self.objects_num: np_objects_num})
+    # without tfprism      
+#      _, loss_value, nilboy = sess.run([self.train_op, self.total_loss, self.nilboy], feed_dict={self.images: np_images, self.labels: np_labels, self.objects_num: np_objects_num})
+
+    # with tfprism      
+      _, loss_value, nilboy = sess.run([self.train_op, self.total_loss, self.nilboy], feed_dict=self.copier.tfprims.mangle_feed_dict({self.images: np_images, self.labels: np_labels, self.objects_num: np_objects_num}))      
+
+      # garbage!
       #loss_value, nilboy = sess.run([self.total_loss, self.nilboy], feed_dict={self.images: np_images, self.labels: np_labels, self.objects_num: np_objects_num})
 
 
